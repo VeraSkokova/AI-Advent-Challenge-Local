@@ -1,70 +1,86 @@
 import kotlinx.coroutines.runBlocking
 import client.OllamaClient
 import model.Message
+import java.io.File
 
-fun main() = runBlocking {
-    println("--- Day 25: Local LLM Chat (with History) ---")
+fun main(args: Array<String>) = runBlocking {
+    println("--- Day 26: Local LLM README Generator ---")
+    
+    // 1. Argument parsing (Manual, without extra libs)
+    if (args.isEmpty()) {
+        println("Usage: ./gradlew run --args=\"<path_to_project_root>\"")
+        println("Example: ./gradlew run --args=\".\"")
+        return@runBlocking
+    }
+
+    val projectPath = args[0]
+    val rootDir = File(projectPath)
+
+    if (!rootDir.exists() || !rootDir.isDirectory) {
+        println("Error: Directory '$projectPath' does not exist.")
+        return@runBlocking
+    }
+
+    // 2. Scan files (simplified: build.gradle.kts + src/**/*.kt)
+    println("Scanning project in: ${rootDir.absolutePath}...")
+    val context = StringBuilder()
+    
+    // Add build.gradle.kts for dependencies context
+    val buildFile = File(rootDir, "build.gradle.kts")
+    if (buildFile.exists()) {
+        context.append("\n=== build.gradle.kts ===\n")
+        context.append(buildFile.readText().take(2000)) // Limit size
+    }
+
+    // Add Kotlin source files (limit to top 3 to avoid context overflow)
+    val srcDir = File(rootDir, "src/main/kotlin")
+    if (srcDir.exists()) {
+        srcDir.walkTopDown()
+            .filter { it.extension == "kt" }
+            .take(3) 
+            .forEach { file ->
+                context.append("\n=== ${file.name} ===\n")
+                context.append(file.readText().take(3000))
+            }
+    }
+
+    if (context.isEmpty()) {
+        println("No suitable files found to analyze.")
+        return@runBlocking
+    }
+
+    // 3. Generate README via Ollama
     val client = OllamaClient()
-    val history = mutableListOf<Message>()
-    var summary = ""
-    val MAX_HISTORY_SIZE = 10
-    val MODEL_NAME = "qwen2.5:1.5b"
+    val modelName = "qwen2.5:1.5b"
+    
+    println("Analyzing code with $modelName...")
+    val prompt = """
+        You are a Technical Writer. Generate a professional README.md for this Kotlin project.
+        
+        Project Code Context:
+        $context
+        
+        Requirements:
+        1. Title and Description (infer from code)
+        2. Tech Stack (libraries from build.gradle)
+        3. Key Features (based on code logic)
+        4. Usage Example
+        
+        Output ONLY the Markdown content.
+    """.trimIndent()
 
     try {
-        while (true) {
-            print("\nYou: ")
-            val input = readlnOrNull()?.trim() ?: break
-            if (input.equals("exit", ignoreCase = true)) break
-            if (input.isBlank()) continue
-
-            // 1. Prepare context
-            val currentContext = mutableListOf<Message>()
-            if (summary.isNotEmpty()) {
-                currentContext.add(Message("system", "Summary of previous conversation: $summary"))
-            }
-            currentContext.addAll(history)
-            currentContext.add(Message("user", input))
-
-            // 2. Generate response
-            println("\n[System] Sending request to $MODEL_NAME...")
-            print("AI: ")
-            
-            // Explicitly passing model name
-            val response = client.generate(currentContext, model = MODEL_NAME) 
-            println(response)
-
-            // 3. Update history
-            history.add(Message("user", input))
-            history.add(Message("assistant", response))
-
-            // 4. Compress if needed
-            if (history.size >= MAX_HISTORY_SIZE) {
-                println("\n[System] Compressing history with $MODEL_NAME...")
-                val toSummarize = history.dropLast(2) // Keep last 2 messages
-                val keep = history.takeLast(2)
-                
-                val summaryPrompt = """
-                    Summarize the following conversation history into a single concise paragraph.
-                    Previous summary: $summary
-                    
-                    New messages:
-                    ${toSummarize.joinToString("\n") { "${it.role}: ${it.content}" }}
-                """.trimIndent()
-
-                val newSummary = client.generate(
-                    listOf(Message("user", summaryPrompt)),
-                    model = MODEL_NAME
-                )
-                
-                summary = newSummary
-                history.clear()
-                history.addAll(keep)
-                println("[System] History compressed. Summary: ${summary.take(50)}...")
-            }
-        }
+        val readmeContent = client.generate(prompt, model = modelName)
+        
+        // 4. Save result
+        val outputFile = File(rootDir, "README_GENERATED.md")
+        outputFile.writeText(readmeContent)
+        println("\n✅ Success! README generated at: ${outputFile.absolutePath}")
+        println("--- Preview ---\n")
+        println(readmeContent.take(500) + "...")
+        
     } catch (e: Exception) {
-        println("Error: ${e.message}")
-        e.printStackTrace()
+        println("Error generating README: ${e.message}")
     } finally {
         client.close()
     }
