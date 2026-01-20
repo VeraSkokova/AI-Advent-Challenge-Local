@@ -24,10 +24,10 @@ class OllamaClient {
         }
     }
 
-    suspend fun generate(prompt: String, model: String = "qwen2.5:1.5b"): String {
+    suspend fun generate(messages: List<Message>, model: String = "qwen2.5:1.5b"): String {
         val requestBody = OllamaRequest(
             model = model,
-            messages = listOf(Message("user", prompt)),
+            messages = messages,
             stream = false
         )
         
@@ -39,6 +39,11 @@ class OllamaClient {
         val responseBody = response.bodyAsText()
         val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<OllamaResponse>(responseBody)
         return parsed.message.content
+    }
+    
+    // Convenience overload for single prompt
+    suspend fun generate(prompt: String, model: String = "qwen2.5:1.5b"): String {
+        return generate(listOf(Message("user", prompt)), model)
     }
 
     fun close() {
