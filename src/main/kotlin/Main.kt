@@ -8,6 +8,7 @@ fun main() = runBlocking {
     val history = mutableListOf<Message>()
     var summary = ""
     val MAX_HISTORY_SIZE = 10
+    val MODEL_NAME = "qwen2.5:1.5b"
 
     try {
         while (true) {
@@ -25,8 +26,11 @@ fun main() = runBlocking {
             currentContext.add(Message("user", input))
 
             // 2. Generate response
+            println("\n[System] Sending request to $MODEL_NAME...")
             print("AI: ")
-            val response = client.generate(currentContext) // Updated to accept List<Message>
+            
+            // Explicitly passing model name
+            val response = client.generate(currentContext, model = MODEL_NAME) 
             println(response)
 
             // 3. Update history
@@ -35,7 +39,7 @@ fun main() = runBlocking {
 
             // 4. Compress if needed
             if (history.size >= MAX_HISTORY_SIZE) {
-                println("\n[System] Compressing history...")
+                println("\n[System] Compressing history with $MODEL_NAME...")
                 val toSummarize = history.dropLast(2) // Keep last 2 messages
                 val keep = history.takeLast(2)
                 
@@ -47,9 +51,9 @@ fun main() = runBlocking {
                     ${toSummarize.joinToString("\n") { "${it.role}: ${it.content}" }}
                 """.trimIndent()
 
-                // Use the same client to summarize
                 val newSummary = client.generate(
-                    listOf(Message("user", summaryPrompt))
+                    listOf(Message("user", summaryPrompt)),
+                    model = MODEL_NAME
                 )
                 
                 summary = newSummary
