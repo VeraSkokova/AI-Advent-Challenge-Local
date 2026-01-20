@@ -18,9 +18,9 @@ class OllamaClient {
             json(Json { ignoreUnknownKeys = true })
         }
         install(HttpTimeout) {
-            requestTimeoutMillis = 60000
-            socketTimeoutMillis = 60000
-            connectTimeoutMillis = 10000
+            requestTimeoutMillis = 300_000 // 5 минут (было 60_000)
+            socketTimeoutMillis = 300_000
+            connectTimeoutMillis = 10_000
         }
     }
 
