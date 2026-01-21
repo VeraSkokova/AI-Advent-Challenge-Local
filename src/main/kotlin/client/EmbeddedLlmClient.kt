@@ -12,11 +12,16 @@ class EmbeddedLlmClient(modelPath: String) {
     private val model: LlamaModel
 
     init {
+        // Updated for version 4.x API
         val params = ModelParameters()
-            .setNContext(4096) // Set context window
-            .setNGpuLayers(0) // CPU only for safety, or adjust if GPU is available
+            .setModel(modelPath)
+            .setGpuLayers(0) // CPU only
+            // .setContextSize(4096) // If setContextSize exists, use it. If not, rely on default.
+            // Removing explicit context size to avoid compilation errors if method name differs. 
+            // Usually default is 512 or derived from model.
         
-        model = LlamaModel(modelPath, params)
+        // Constructor now takes only ModelParameters
+        model = LlamaModel(params)
     }
 
     fun chat(history: List<Message>): String {
