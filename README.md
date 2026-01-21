@@ -1,51 +1,42 @@
-# День 26: Локальная LLM в реальном приложении 🛠️🤖
+# Day 27: Local LLM (Embedded Chat)
 
-## Задание
-Интегрировать локальную языковую модель (LLM) в полезную CLI-утилиту для разработчика.
-Приложение должно работать **офлайн**, анализировать исходный код проекта и автоматически генерировать документацию.
+Autonomous console chat application that carries its own brain. Runs GGUF models locally using JVM bindings for llama.cpp.
 
-## Реализованное решение: AI Documentation Generator
-Мы создали CLI-утилиту на Kotlin, которая:
-1.  **Сканирует** указанную директорию проекта.
-2.  **Читает** ключевые файлы (`build.gradle.kts`, исходный код `.kt`).
-3.  **Формирует промпт** с контекстом кода.
-4.  **Отправляет** его в локальную модель Ollama (`qwen2.5:1.5b`).
-5.  **Генерирует** файл `README_GENERATED.md` с описанием проекта, стеком технологий и примерами использования.
+## Features
+- **100% Offline**: No Ollama, no API keys, no internet required during inference.
+- **Embedded Inference**: Uses `de.kherud:llama` library to run models directly in the application process.
+- **REPL Interface**: Interactive console chat with command support.
+- **Custom System Prompts**: Change the AI persona on the fly.
 
-## Технические детали
-- **Стек**: Kotlin, Ktor Client (CIO), kotlinx.serialization.
-- **Модель**: `qwen2.5:1.5b` (через Ollama).
-- **Особенности**:
-    - Работает без внешних API ключей.
-    - Увеличенный таймаут (5 минут) для обработки больших контекстов на CPU/слабых GPU.
-    - Прямой анализ файловой системы без дополнительных библиотек.
+## Prerequisites
+- JDK 17 or higher.
+- A GGUF format LLM model (e.g., Phi-3, Llama-3, Mistral).
 
-## Как запустить
+## Setup
 
-### Предварительные требования
-1.  Установленная [Ollama](https://ollama.com).
-2.  Скачанная модель: `ollama pull qwen2.5:1.5b`.
-3.  Запущенный сервер: `ollama run qwen2.5:1.5b`.
+1. **Download a Model**
+   You need a GGUF model file. Small models (<= 3GB) recommended for CPU inference.
+   *   **Recommended**: [Phi-3 Mini 4k Instruct (Q4)](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf) (~2.4GB)
+   *   Alternative: [TinyLlama 1.1B](https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF) (~600MB)
 
-### Использование
-Запустите утилиту через Gradle, передав путь к анализируемому проекту в аргументах:
+2. **Place the Model**
+   *   Rename the downloaded file to `model.gguf`.
+   *   Place it in the **root directory** of the project.
+
+## How to Run
 
 ```bash
-# Генерация документации для текущего проекта
-./gradlew run --args="."
-
-# Или укажите путь к другому проекту
-./gradlew run --args="C:/Users/Dev/AnotherProject"
+./gradlew run
 ```
 
-### Пример работы
-```text
---- Day 26: Local LLM README Generator ---
-Scanning project in: .../AI-Advent-Challenge-Local...
-Analyzing code with qwen2.5:1.5b...
+## Commands
+*   `/system <text>` - Update the system prompt (resets conversation context).
+*   `/exit` - Quit the application.
 
-✅ Success! README generated at: .../AI-Advent-Challenge-Local/README_GENERATED.md
-```
+## Troubleshooting
+*   **"Model not found"**: Ensure `model.gguf` is in the project root (where `build.gradle.kts` is).
+*   **Slow performance**: This runs on CPU by default. Performance depends on your hardware and model size (parameter count/quantization).
 
-## Результат
-После выполнения в корне проекта появится файл `README_GENERATED.md`, написанный вашей локальной нейросетью на основе анализа кода.
+## Tech Stack
+*   Kotlin JVM
+*   [java-llama.cpp](https://github.com/kherud/java-llama.cpp) (v4.2.0)
