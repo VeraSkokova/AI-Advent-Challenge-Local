@@ -3,6 +3,7 @@ package client
 import de.kherud.llama.InferenceParameters
 import de.kherud.llama.LlamaModel
 import de.kherud.llama.ModelParameters
+import de.kherud.llama.args.MiroStat
 import model.Message
 import java.io.File
 
@@ -24,8 +25,8 @@ class EmbeddedLlmClient(modelPath: String) {
         val inferenceParams = InferenceParameters(prompt)
             .setTemperature(0.7f)
             .setPenalizeNl(true)
-            .setMirostat(InferenceParameters.MiroStat.V2)
-            .setAntiPrompt("User:") // Stop generation when User: appears
+            .setMiroStat(MiroStat.V2)
+            .setStopStrings("User:") // Stop generation when User: appears
 
         val response = StringBuilder()
         for (output in model.generate(inferenceParams)) {
