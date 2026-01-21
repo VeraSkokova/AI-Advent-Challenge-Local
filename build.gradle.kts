@@ -20,6 +20,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
     implementation("ch.qos.logback:logback-classic:1.4.14")
+    implementation("de.kherud:java-llama.cpp:2.3.4")
 }
 
 application {
