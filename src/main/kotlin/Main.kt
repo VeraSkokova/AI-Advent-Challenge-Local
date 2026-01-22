@@ -1,86 +1,99 @@
 import kotlinx.coroutines.runBlocking
 import client.OllamaClient
+import client.OllamaOptions
 import model.Message
 import java.io.File
+import kotlin.system.measureTimeMillis
 
 fun main(args: Array<String>) = runBlocking {
-    println("--- Day 26: Local LLM README Generator ---")
+    println("--- Day 28: LLM Benchmark (Baseline vs Optimized) ---")
     
-    // 1. Argument parsing (Manual, without extra libs)
     if (args.isEmpty()) {
         println("Usage: ./gradlew run --args=\"<path_to_project_root>\"")
-        println("Example: ./gradlew run --args=\".\"")
         return@runBlocking
     }
 
     val projectPath = args[0]
     val rootDir = File(projectPath)
-
-    if (!rootDir.exists() || !rootDir.isDirectory) {
+    if (!rootDir.exists()) {
         println("Error: Directory '$projectPath' does not exist.")
         return@runBlocking
     }
 
-    // 2. Scan files (simplified: build.gradle.kts + src/**/*.kt)
-    println("Scanning project in: ${rootDir.absolutePath}...")
+    // 1. Prepare Context
+    println("Scanning project...")
     val context = StringBuilder()
-    
-    // Add build.gradle.kts for dependencies context
-    val buildFile = File(rootDir, "build.gradle.kts")
-    if (buildFile.exists()) {
-        context.append("\n=== build.gradle.kts ===\n")
-        context.append(buildFile.readText().take(2000)) // Limit size
-    }
-
-    // Add Kotlin source files (limit to top 3 to avoid context overflow)
-    val srcDir = File(rootDir, "src/main/kotlin")
-    if (srcDir.exists()) {
-        srcDir.walkTopDown()
-            .filter { it.extension == "kt" }
-            .take(3) 
-            .forEach { file ->
-                context.append("\n=== ${file.name} ===\n")
-                context.append(file.readText().take(3000))
-            }
+    File(rootDir, "build.gradle.kts").let { if (it.exists()) context.append("\n=== build.gradle.kts ===\n${it.readText().take(2000)}") }
+    File(rootDir, "src/main/kotlin").walkTopDown().filter { it.extension == "kt" }.take(3).forEach { 
+        context.append("\n=== ${it.name} ===\n${it.readText().take(3000)}") 
     }
 
     if (context.isEmpty()) {
-        println("No suitable files found to analyze.")
+        println("No content found.")
         return@runBlocking
     }
 
-    // 3. Generate README via Ollama
     val client = OllamaClient()
     val modelName = "qwen2.5:1.5b"
-    
-    println("Analyzing code with $modelName...")
-    val prompt = """
-        You are a Technical Writer. Generate a professional README.md for this Kotlin project.
-        
-        Project Code Context:
-        $context
-        
-        Requirements:
-        1. Title and Description (infer from code)
-        2. Tech Stack (libraries from build.gradle)
-        3. Key Features (based on code logic)
-        4. Usage Example
-        
-        Output ONLY the Markdown content.
-    """.trimIndent()
 
     try {
-        val readmeContent = client.generate(prompt, model = modelName)
+        // --- Scenario 1: Baseline ---
+        println("\n🚀 Running Scenario 1: BASELINE (High Temp, Basic Prompt)")
+        val promptBaseline = """
+            Generate a README.md for this project.
+            
+            Code:
+            $context
+        """.trimIndent()
         
-        // 4. Save result
-        val outputFile = File(rootDir, "README_GENERATED.md")
-        outputFile.writeText(readmeContent)
-        println("\n✅ Success! README generated at: ${outputFile.absolutePath}")
-        println("--- Preview ---\n")
-        println(readmeContent.take(500) + "...")
+        val optionsBaseline = OllamaOptions(temperature = 0.7, num_ctx = 2048)
         
+        val timeBaseline = measureTimeMillis {
+            val result = client.generate(promptBaseline, model = modelName, options = optionsBaseline)
+            File(rootDir, "README_BASELINE.md").writeText(result)
+        }
+        println("✅ Baseline completed in ${timeBaseline}ms. Saved to README_BASELINE.md")
+
+
+        // --- Scenario 2: Optimized ---
+        println("\n🚀 Running Scenario 2: OPTIMIZED (Low Temp, Expert Persona, Higher Context)")
+        val promptOptimized = """
+            You are a Senior Technical Writer and Kotlin Expert.
+            Your task is to write a comprehensive, professional README.md for the provided project.
+            
+            Structure the README as follows:
+            1. **Project Title & One-Liner**: Clear and catchy.
+            2. **Key Features**: Bullet points inferred from code logic.
+            3. **Tech Stack**: List libraries from build.gradle.
+            4. **Getting Started**: Steps to run the code.
+            
+            Style Guidelines:
+            - Use clear, concise English.
+            - Use emojis for section headers.
+            - Do not invent features not present in the code.
+            
+            Project Context:
+            $context
+        """.trimIndent()
+        
+        // Lower temperature for factual consistency, higher context to fit more code
+        val optionsOptimized = OllamaOptions(temperature = 0.2, num_ctx = 4096)
+        
+        val timeOptimized = measureTimeMillis {
+            val result = client.generate(promptOptimized, model = modelName, options = optionsOptimized)
+            File(rootDir, "README_OPTIMIZED.md").writeText(result)
+        }
+        println("✅ Optimized completed in ${timeOptimized}ms. Saved to README_OPTIMIZED.md")
+
+        // --- Summary ---
+        println("\n📊 BENCHMARK RESULTS:")
+        println("Baseline:  ${timeBaseline}ms | Temp: 0.7 | Context: 2048")
+        println("Optimized: ${timeOptimized}ms | Temp: 0.2 | Context: 4096")
+        println("Compare the files to see quality differences!")
+
     } catch (e: Exception) {
-        println("Error generating README: ${e.message}")
+        println("Error: ${e.message}")
+        e.printStackTrace()
     } finally {
         client.close()
     }
