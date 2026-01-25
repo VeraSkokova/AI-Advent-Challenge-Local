@@ -19,6 +19,11 @@ class LocalMCPServer(private val rootDir: File) {
                 parameters = listOf("limit")
             ),
             ToolInfo(
+                name = "git_stats",
+                description = "Get statistics about repository contributors and commit counts. Use this for questions like 'Who made the most commits?'.",
+                parameters = listOf()
+            ),
+            ToolInfo(
                 name = "list_files",
                 description = "List files in the project directory (non-recursive).",
                 parameters = listOf("path")
@@ -36,6 +41,9 @@ class LocalMCPServer(private val rootDir: File) {
             "git_log" -> {
                 val limit = params["limit"]?.toIntOrNull() ?: 20
                 runGitLog(limit)
+            }
+            "git_stats" -> {
+                runGitStats()
             }
             "list_files" -> {
                 val path = params["path"] ?: "."
@@ -73,6 +81,37 @@ class LocalMCPServer(private val rootDir: File) {
             process.inputStream.bufferedReader().readText()
         } catch (e: Exception) {
             "Error reading git logs: ${e.message}"
+        }
+    }
+
+    private fun runGitStats(): String {
+        return try {
+            // Use git shortlog to get summary: "   5  Vera Skokova"
+            val process = ProcessBuilder("git", "shortlog", "-s", "-n", "--all")
+                .directory(rootDir)
+                .redirectErrorStream(true)
+                .start()
+            
+            process.waitFor(5, TimeUnit.SECONDS)
+            val output = process.inputStream.bufferedReader().readText().trim()
+            
+            if (output.isBlank()) return "No commit statistics found."
+            
+            // Calculate total
+            val totalCommits = output.lines().sumOf { line -> 
+                line.trim().split("\\s+".toRegex()).firstOrNull()?.toIntOrNull() ?: 0 
+            }
+
+            """
+                GIT STATISTICS REPORT:
+                ----------------------
+                Total Commits: $totalCommits
+                
+                Contributors (Count | Name):
+                $output
+            """.trimIndent()
+        } catch (e: Exception) {
+            "Error calculating git stats: ${e.message}"
         }
     }
 }
