@@ -2,74 +2,46 @@ import kotlinx.coroutines.runBlocking
 import client.OllamaClient
 import client.OllamaOptions
 import model.Message
+import mcp.LocalMCPServer
 import java.io.File
-import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.*
 
 fun main(args: Array<String>) = runBlocking {
-    println("--- Day 29: Local Git Analyst 📊 (Smart Edition) ---")
+    println("--- Day 29: Local Git Analyst (MCP Edition) 🤖🔧 ---")
     
-    // 1. Get Git Logs
-    println("🔍 extracting git logs...")
-    val rawLogs = getGitLogs()
-    
-    if (rawLogs.isEmpty()) {
-        println("❌ No logs found or not a git repository.")
-        return@runBlocking
-    }
-    
-    // 2. Pre-calculate Stats (Help the LLM!)
-    val logLines = rawLogs.lines().filter { it.isNotBlank() }
-    val commitCount = logLines.size
-    
-    // Parse authors (Format: Hash | Author | Date | Msg)
-    val authors = logLines.mapNotNull { line ->
-        val parts = line.split("|")
-        if (parts.size >= 2) parts[1].trim() else null
-    }.groupingBy { it }.eachCount()
-    
-    val topAuthor = authors.maxByOrNull { it.value }
-    val authorsStat = authors.entries.joinToString(", ") { "${it.key} (${it.value})" }
-
-    val statsSummary = """
-        *** PRE-CALCULATED STATISTICS ***
-        - Total Commits Loaded: $commitCount
-        - Contributors: $authorsStat
-        - Most Active Author: ${topAuthor?.key ?: "Unknown"} with ${topAuthor?.value ?: 0} commits
-        *********************************
-    """.trimIndent()
-
-    println("✅ Loaded $commitCount commits.")
-    println("📊 Stats: Top Author is ${topAuthor?.key}")
-
-    // 3. Initialize Client
+    val rootDir = File(".")
+    val mcpServer = LocalMCPServer(rootDir)
     val client = OllamaClient()
     val modelName = "qwen2.5:1.5b"
     val history = mutableListOf<Message>()
-    
-    // 4. System Prompt with Data AND Stats
+
+    // 1. Build System Prompt with Tool Definitions
+    val toolsList = mcpServer.getToolsList().joinToString("\n") { 
+        "- ${it.name}: ${it.description} Params: ${it.parameters}" 
+    }
+
     val systemPrompt = """
-        You are a Data Analyst specializing in Git history analysis.
+        You are a smart DevOps Assistant with access to local tools.
         
-        $statsSummary
-        
-        RAW GIT LOGS:
-        Format: Hash | Author | Date | Message
-        ----------------------------------------
-        $rawLogs
-        ----------------------------------------
+        AVAILABLE TOOLS:
+        $toolsList
         
         INSTRUCTIONS:
-        - Use the PRE-CALCULATED STATISTICS to answer questions about counts and top authors.
-        - Use RAW GIT LOGS to answer questions about specific features, dates, or task details.
-        - If the answer is not in the logs, say "I don't see that in the provided logs".
-        - Keep answers concise and factual.
+        1. When the user asks a question, decide if you need to use a tool.
+        2. To use a tool, output JSON ONLY in this format:
+           {"tool": "tool_name", "params": {"param_key": "param_value"}}
+        3. Do not write any text before or after the JSON.
+        4. If you have the information you need, answer the user normally (text).
+        
+        EXAMPLE:
+        User: "Show me recent commits"
+        Assistant: {"tool": "git_log", "params": {"limit": "10"}}
     """.trimIndent()
-    
+
     history.add(Message("system", systemPrompt))
     
-    println("\n🤖 Analyst is ready! Ask questions like:")
-    println("- 'Who made the most commits?'")
-    println("- 'What did we do on Day 25?'")
+    println("\n✅ Agent initialized with tools: git_log, list_files, read_file")
+    println("🤖 Ask me anything! (e.g., 'What is in Main.kt?', 'Who committed last?')")
     println("(Type 'exit' to quit)\n")
 
     try {
@@ -80,21 +52,37 @@ fun main(args: Array<String>) = runBlocking {
             if (input.isBlank()) continue
 
             history.add(Message("user", input))
-
-            print("Analyst: ")
-            val options = OllamaOptions(temperature = 0.1, num_ctx = 4096)
             
-            val response = client.generate(history, model = modelName, options = options)
-            println(response)
+            // ReAct Loop: Allow up to 3 turns (Thought -> Tool -> Thought -> Answer)
+            var turns = 0
+            val maxTurns = 5
+            var finalAnswerGiven = false
 
-            history.add(Message("assistant", response))
-            
-            if (history.size > 8) {
-                val kept = mutableListOf<Message>()
-                kept.add(history.first())
-                kept.addAll(history.takeLast(6))
-                history.clear()
-                history.addAll(kept)
+            while (turns < maxTurns && !finalAnswerGiven) {
+                print("Thinking... ")
+                // Use low temp for precise tool calling
+                val options = OllamaOptions(temperature = 0.1, num_ctx = 4096)
+                val response = client.generate(history, model = modelName, options = options)
+                
+                // Parse Response
+                val toolCall = parseToolCall(response)
+                
+                if (toolCall != null) {
+                    println("\n⚙️ Executing tool: ${toolCall.name} with ${toolCall.params}")
+                    
+                    val toolResult = mcpServer.executeTool(toolCall.name, toolCall.params)
+                    println("📝 Tool Output (${toolResult.length} chars)")
+                    
+                    // Add interaction to history
+                    history.add(Message("assistant", response))
+                    history.add(Message("user", "TOOL_OUTPUT:\n$toolResult\n\nAnalyze this data and answer the user, or use another tool."))
+                    turns++
+                } else {
+                    // It's a final text answer
+                    println("\nAnalyst: $response")
+                    history.add(Message("assistant", response))
+                    finalAnswerGiven = true
+                }
             }
         }
     } catch (e: Exception) {
@@ -105,15 +93,28 @@ fun main(args: Array<String>) = runBlocking {
     }
 }
 
-fun getGitLogs(): String {
-    return try {
-        val process = ProcessBuilder("git", "log", "--pretty=format:%h | %an | %ad | %s", "--date=short", "-n", "50")
-            .redirectErrorStream(true)
-            .start()
+data class ToolCall(val name: String, val params: Map<String, String>)
+
+fun parseToolCall(response: String): ToolCall? {
+    try {
+        // Regex to find JSON block if model adds extra text
+        val jsonRegex = Regex("""\{.*\}""", RegexOption.DOT_MATCHES_ALL)
+        val jsonString = jsonRegex.find(response)?.value ?: response.trim()
         
-        process.waitFor(5, TimeUnit.SECONDS)
-        process.inputStream.bufferedReader().readText()
+        if (!jsonString.startsWith("{")) return null
+        
+        val jsonElement = Json { ignoreUnknownKeys = true }.parseToJsonElement(jsonString).jsonObject
+        if (!jsonElement.containsKey("tool")) return null
+        
+        val tool = jsonElement["tool"]?.jsonPrimitive?.content ?: return null
+        val paramsElement = jsonElement["params"]?.jsonObject
+        
+        val params = paramsElement?.entries?.associate { 
+            it.key to it.value.jsonPrimitive.content 
+        } ?: emptyMap()
+        
+        return ToolCall(tool, params)
     } catch (e: Exception) {
-        "Error reading git logs: ${e.message}"
+        return null // Not valid JSON, treat as text
     }
 }
