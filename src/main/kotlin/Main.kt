@@ -33,6 +33,12 @@ fun main(args: Array<String>) = runBlocking {
         3. Do not write any text before or after the JSON.
         4. If you have the information you need, answer the user normally (text).
         
+        CRITICAL RULES FOR PATHS:
+        - ALWAYS use relative paths from the project root.
+        - GOOD: "build.gradle.kts", "src/main/kotlin/Main.kt"
+        - BAD: "/path/to/file", "./file"
+        - If unsure about file location, use 'list_files' first.
+        
         EXAMPLE:
         User: "Show me recent commits"
         Assistant: {"tool": "git_log", "params": {"limit": "10"}}
