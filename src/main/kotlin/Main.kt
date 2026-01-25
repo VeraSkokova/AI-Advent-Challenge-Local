@@ -3,98 +3,99 @@ import client.OllamaClient
 import client.OllamaOptions
 import model.Message
 import java.io.File
-import kotlin.system.measureTimeMillis
+import java.util.concurrent.TimeUnit
 
 fun main(args: Array<String>) = runBlocking {
-    println("--- Day 28: LLM Benchmark (Baseline vs Optimized) ---")
+    println("--- Day 29: Local Git Analyst 📊 ---")
     
-    if (args.isEmpty()) {
-        println("Usage: ./gradlew run --args=\"<path_to_project_root>\"")
+    // 1. Get Git Logs
+    println("🔍 extracting git logs...")
+    val gitLogs = getGitLogs()
+    
+    if (gitLogs.isEmpty()) {
+        println("❌ No logs found or not a git repository.")
         return@runBlocking
     }
+    
+    println("✅ Loaded ${gitLogs.lines().size} recent commits.")
+    println("📝 Sample:\n${gitLogs.lines().take(3).joinToString("\n")}\n...")
 
-    val projectPath = args[0]
-    val rootDir = File(projectPath)
-    if (!rootDir.exists()) {
-        println("Error: Directory '$projectPath' does not exist.")
-        return@runBlocking
-    }
-
-    // 1. Prepare Context
-    println("Scanning project...")
-    val context = StringBuilder()
-    File(rootDir, "build.gradle.kts").let { if (it.exists()) context.append("\n=== build.gradle.kts ===\n${it.readText().take(2000)}") }
-    File(rootDir, "src/main/kotlin").walkTopDown().filter { it.extension == "kt" }.take(3).forEach { 
-        context.append("\n=== ${it.name} ===\n${it.readText().take(3000)}") 
-    }
-
-    if (context.isEmpty()) {
-        println("No content found.")
-        return@runBlocking
-    }
-
+    // 2. Initialize Client
     val client = OllamaClient()
     val modelName = "qwen2.5:1.5b"
+    val history = mutableListOf<Message>()
+    
+    // 3. System Prompt with Data
+    val systemPrompt = """
+        You are a Data Analyst specializing in Git history analysis.
+        
+        DATA SOURCE (Git Logs):
+        Format: Hash | Author | Date | Message
+        ----------------------------------------
+        $gitLogs
+        ----------------------------------------
+        
+        INSTRUCTIONS:
+        - Analyze the provided logs to answer user questions.
+        - Be specific. Count commits, identify authors, look for patterns in dates or messages.
+        - If the answer is not in the logs, say "I don't see that in the provided logs".
+        - Keep answers concise and factual.
+    """.trimIndent()
+    
+    // Initialize context with system prompt
+    history.add(Message("system", systemPrompt))
+    
+    println("\n🤖 Analyst is ready! Ask questions like:")
+    println("- 'Who made the most commits?'")
+    println("- 'What did we do on Day 25?'")
+    println("- 'List all features added recently'")
+    println("(Type 'exit' to quit)\n")
 
     try {
-        // --- Scenario 1: Baseline ---
-        println("\n🚀 Running Scenario 1: BASELINE (High Temp, Basic Prompt)")
-        val promptBaseline = """
-            Generate a README.md for this project.
+        while (true) {
+            print("\nYou: ")
+            val input = readlnOrNull()?.trim() ?: break
+            if (input.equals("exit", ignoreCase = true)) break
+            if (input.isBlank()) continue
+
+            history.add(Message("user", input))
+
+            print("Analyst: ")
+            // Low temperature for analytical precision
+            val options = OllamaOptions(temperature = 0.2, num_ctx = 4096)
             
-            Code:
-            $context
-        """.trimIndent()
-        
-        val optionsBaseline = OllamaOptions(temperature = 0.7, num_ctx = 2048)
-        
-        val timeBaseline = measureTimeMillis {
-            val result = client.generate(promptBaseline, model = modelName, options = optionsBaseline)
-            File(rootDir, "README_BASELINE.md").writeText(result)
+            val response = client.generate(history, model = modelName, options = options)
+            println(response)
+
+            history.add(Message("assistant", response))
+            
+            // Basic history management: Keep System Prompt + last 6 messages
+            if (history.size > 8) {
+                val kept = mutableListOf<Message>()
+                kept.add(history.first()) // Keep System Prompt with Data
+                kept.addAll(history.takeLast(6))
+                history.clear()
+                history.addAll(kept)
+            }
         }
-        println("✅ Baseline completed in ${timeBaseline}ms. Saved to README_BASELINE.md")
-
-
-        // --- Scenario 2: Optimized ---
-        println("\n🚀 Running Scenario 2: OPTIMIZED (Low Temp, Expert Persona, Higher Context)")
-        val promptOptimized = """
-            You are a Senior Technical Writer and Kotlin Expert.
-            Your task is to write a comprehensive, professional README.md for the provided project.
-            
-            Structure the README as follows:
-            1. **Project Title & One-Liner**: Clear and catchy.
-            2. **Key Features**: Bullet points inferred from code logic.
-            3. **Tech Stack**: List libraries from build.gradle.
-            4. **Getting Started**: Steps to run the code.
-            
-            Style Guidelines:
-            - Use clear, concise English.
-            - Use emojis for section headers.
-            - Do not invent features not present in the code.
-            
-            Project Context:
-            $context
-        """.trimIndent()
-        
-        // Lower temperature for factual consistency, higher context to fit more code
-        val optionsOptimized = OllamaOptions(temperature = 0.2, num_ctx = 4096)
-        
-        val timeOptimized = measureTimeMillis {
-            val result = client.generate(promptOptimized, model = modelName, options = optionsOptimized)
-            File(rootDir, "README_OPTIMIZED.md").writeText(result)
-        }
-        println("✅ Optimized completed in ${timeOptimized}ms. Saved to README_OPTIMIZED.md")
-
-        // --- Summary ---
-        println("\n📊 BENCHMARK RESULTS:")
-        println("Baseline:  ${timeBaseline}ms | Temp: 0.7 | Context: 2048")
-        println("Optimized: ${timeOptimized}ms | Temp: 0.2 | Context: 4096")
-        println("Compare the files to see quality differences!")
-
     } catch (e: Exception) {
         println("Error: ${e.message}")
         e.printStackTrace()
     } finally {
         client.close()
+    }
+}
+
+fun getGitLogs(): String {
+    return try {
+        // Format: Hash | Author | Date | Subject
+        val process = ProcessBuilder("git", "log", "--pretty=format:%h | %an | %ad | %s", "--date=short", "-n", "50")
+            .redirectErrorStream(true)
+            .start()
+        
+        process.waitFor(5, TimeUnit.SECONDS)
+        process.inputStream.bufferedReader().readText()
+    } catch (e: Exception) {
+        "Error reading git logs: ${e.message}"
     }
 }
