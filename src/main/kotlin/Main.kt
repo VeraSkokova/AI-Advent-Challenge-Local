@@ -7,7 +7,7 @@ import java.io.File
 import kotlinx.serialization.json.*
 
 fun main(args: Array<String>) = runBlocking {
-    println("--- Day 29: Local Git Analyst (MCP Edition) 🤖🔧 ---")
+    println("--- Day 29: Local Git Analyst (MCP Edition v2) 🤖🔧 ---")
     
     val rootDir = File(".")
     val mcpServer = LocalMCPServer(rootDir)
@@ -33,11 +33,11 @@ fun main(args: Array<String>) = runBlocking {
         3. Do not write any text before or after the JSON.
         4. If you have the information you need, answer the user normally (text).
         
-        CRITICAL RULES FOR PATHS:
-        - ALWAYS use relative paths from the project root.
-        - GOOD: "build.gradle.kts", "src/main/kotlin/Main.kt"
-        - BAD: "/path/to/file", "./file"
-        - If unsure about file location, use 'list_files' first.
+        CRITICAL RULES:
+        - Parameter values must be STRINGS. Do not use arrays [] or objects {}.
+        - Do not invent parameters not listed in AVAILABLE TOOLS.
+        - ALWAYS use relative paths from the project root (e.g., "src/main/kotlin/Main.kt").
+        - If the tool output is sufficient, do not call the same tool again.
         
         EXAMPLE:
         User: "Show me recent commits"
@@ -46,8 +46,8 @@ fun main(args: Array<String>) = runBlocking {
 
     history.add(Message("system", systemPrompt))
     
-    println("\n✅ Agent initialized with tools: git_log, list_files, read_file")
-    println("🤖 Ask me anything! (e.g., 'What is in Main.kt?', 'Who committed last?')")
+    println("\n✅ Agent initialized with tools: git_log, git_stats, list_files, read_file")
+    println("🤖 Ask me anything! (e.g., 'Who committed last?', 'Show me Main.kt')")
     println("(Type 'exit' to quit)\n")
 
     try {
@@ -59,15 +59,14 @@ fun main(args: Array<String>) = runBlocking {
 
             history.add(Message("user", input))
             
-            // ReAct Loop: Allow up to 3 turns (Thought -> Tool -> Thought -> Answer)
             var turns = 0
             val maxTurns = 5
             var finalAnswerGiven = false
 
             while (turns < maxTurns && !finalAnswerGiven) {
                 print("Thinking... ")
-                // Use low temp for precise tool calling
-                val options = OllamaOptions(temperature = 0.1, num_ctx = 4096)
+                // Use extremely low temp for tool calling precision
+                val options = OllamaOptions(temperature = 0.0, num_ctx = 4096)
                 val response = client.generate(history, model = modelName, options = options)
                 
                 // Parse Response
@@ -77,14 +76,15 @@ fun main(args: Array<String>) = runBlocking {
                     println("\n⚙️ Executing tool: ${toolCall.name} with ${toolCall.params}")
                     
                     val toolResult = mcpServer.executeTool(toolCall.name, toolCall.params)
+                    // Truncate output to avoid flooding context
+                    val truncatedResult = toolResult.take(2000) + if (toolResult.length > 2000) "\n...[truncated]" else ""
+                    
                     println("📝 Tool Output (${toolResult.length} chars)")
                     
-                    // Add interaction to history
                     history.add(Message("assistant", response))
-                    history.add(Message("user", "TOOL_OUTPUT:\n$toolResult\n\nAnalyze this data and answer the user, or use another tool."))
+                    history.add(Message("user", "TOOL_OUTPUT:\n$truncatedResult\n\nAnalyze this data. If you have the answer, output it as text. If you need more data, use another tool."))
                     turns++
                 } else {
-                    // It's a final text answer
                     println("\nAnalyst: $response")
                     history.add(Message("assistant", response))
                     finalAnswerGiven = true
@@ -103,7 +103,6 @@ data class ToolCall(val name: String, val params: Map<String, String>)
 
 fun parseToolCall(response: String): ToolCall? {
     try {
-        // Regex to find JSON block if model adds extra text
         val jsonRegex = Regex("""\{.*\}""", RegexOption.DOT_MATCHES_ALL)
         val jsonString = jsonRegex.find(response)?.value ?: response.trim()
         
@@ -115,12 +114,20 @@ fun parseToolCall(response: String): ToolCall? {
         val tool = jsonElement["tool"]?.jsonPrimitive?.content ?: return null
         val paramsElement = jsonElement["params"]?.jsonObject
         
-        val params = paramsElement?.entries?.associate { 
-            it.key to it.value.jsonPrimitive.content 
+        // Robust parsing: handle Arrays or non-Strings by converting to String
+        val params = paramsElement?.entries?.associate { entry -> 
+            val value = when (val element = entry.value) {
+                is JsonPrimitive -> element.content
+                is JsonArray -> element.joinToString(",") { 
+                    if (it is JsonPrimitive) it.content else it.toString() 
+                } // Flatten arrays to comma-separated strings
+                else -> element.toString()
+            }
+            entry.key to value
         } ?: emptyMap()
         
         return ToolCall(tool, params)
     } catch (e: Exception) {
-        return null // Not valid JSON, treat as text
+        return null 
     }
 }
